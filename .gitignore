@@ -1,0 +1,16 @@
+# Ignore virtual environment
+.venv/
+
+# Ignore environment variables file
+.env
+
+# Ignore Python cache files
+__pycache__/
+*.pyc
+
+# Ignore SQLite database file
+timezones.db
+
+# Ignore other unnecessary files
+.DS_Store
+*.log
