@@ -1,4 +1,7 @@
 from worldclock import bot, TOKEN
 
-if __name__ == "__main__":
+def main():
     bot.run(TOKEN)
+
+if __name__ == "__main__":
+    main()
