@@ -3,7 +3,6 @@ from discord.ext import commands, tasks
 from datetime import datetime
 import pytz
 import aiosqlite
-
 import os
 from dotenv import load_dotenv
 
@@ -153,6 +152,8 @@ async def display_timezones():
                 print("Message not found, skipping update.")
             except discord.Forbidden:
                 print("Bot does not have permission to edit the message.")
+            except discord.HTTPException as e:
+                print(f"Failed to edit message: {e}")
 
 @bot.command()
 async def currenttime(ctx):
@@ -235,6 +236,8 @@ async def rsgametime_loop():
                 print("Message not found, skipping update.")
             except discord.Forbidden:
                 print("Bot does not have permission to edit the message.")
+            except discord.HTTPException as e:
+                print(f"Failed to edit message: {e}")
 
 @bot.command()
 async def worldclockhelp(ctx):
@@ -250,6 +253,11 @@ async def worldclockhelp(ctx):
     `!rsgametime` - Displays the current Runescape Game Time (RST) and updates every 15 seconds.
     """
     await ctx.send(help_message)
+
+@bot.event
+async def on_command_error(ctx, error):
+    if isinstance(error, commands.CommandNotFound):
+        await ctx.send("Command not found. Use `!worldclockhelp` to see the list of available commands.")
 
 # Run the bot
 bot.run(TOKEN)
