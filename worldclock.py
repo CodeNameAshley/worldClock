@@ -11,20 +11,21 @@ load_dotenv()
 TOKEN = os.getenv("DISCORD_TOKEN")
 DATABASE = 'timezones.db'
 
-# Channel ID for #world-clock
-WORLD_CLOCK_CHANNEL_ID = 1323546512512520295  # Replace with your channel ID
-
-# Message IDs for updates
-RST_MESSAGE_ID = 1324168260412772453  # RuneScape Game Time
-TIMEZONES_MESSAGE_ID = 1324168267434299464  # Timezones Display
-
 # Bot setup
 intents = discord.Intents.default()
-intents.message_content = True
+intents.message_content = True  # Make sure this is enabled for message content access
 bot = commands.Bot(command_prefix="!", intents=intents)
+
+# Store the message ID and channel ID for the display message
+display_message_info = {}
+rsgame_message_info = {}
 
 async def create_db():
     """Creates the database and the table if it doesn't exist."""
+    if not os.path.exists(DATABASE):
+        print(f"Database file {DATABASE} does not exist. It will be created.")
+    else:
+        print(f"Database file {DATABASE} already exists. Loading existing data.")
     async with aiosqlite.connect(DATABASE) as db:
         await db.execute('''
             CREATE TABLE IF NOT EXISTS timezones (
@@ -37,45 +38,31 @@ async def create_db():
 
 @bot.event
 async def on_ready():
-    """Event triggered when the bot is ready."""
+    """Event that runs when the bot is ready."""
     print(f'Logged in as {bot.user.name}')
-    await create_db()
+    await create_db()  # Ensure the database and table are created
     display_timezones.start()
     rsgametime_loop.start()
 
 @bot.command()
-async def addtimezone(ctx, timezone: str):
-    """Adds a new timezone to the list of tracked timezones.
-    
-    Usage: !addtimezone <timezone>
-    Example: !addtimezone America/Los_Angeles
-    """
-    try:
-        # Validate the timezone
-        pytz.timezone(timezone)
-    except pytz.UnknownTimeZoneError:
-        await ctx.send(f"Error: '{timezone}' is not a valid timezone. Please use a valid timezone (e.g., 'America/Los_Angeles').")
-        return
-
-    # Use the timezone as both the label and the timezone in the database
-    label = timezone
+async def addtimezone(ctx, label: str):
+    """Adds a new timezone to the list of tracked timezones."""
     async with aiosqlite.connect(DATABASE) as db:
-        await db.execute("INSERT INTO timezones (label, timezone) VALUES (?, ?)", (label, timezone))
+        await db.execute("INSERT INTO timezones (label, timezone) VALUES (?, ?)", (label, label))
         await db.commit()
-    await ctx.send(f"Timezone '{timezone}' added.")
-
+    await ctx.send(f"Timezone {label} added.")
 
 @bot.command()
 async def listtimezones(ctx):
     """Lists all currently tracked timezones."""
     async with aiosqlite.connect(DATABASE) as db:
-        cursor = await db.execute("SELECT label, timezone FROM timezones")
+        cursor = await db.execute("SELECT label FROM timezones")
         timezones = await cursor.fetchall()
 
     if timezones:
         message = "```"
-        for label, tz in timezones:
-            message += f"{label} ({tz})\n"
+        for tz in timezones:
+            message += f"{tz[0]}\n"
         message += "```"
         await ctx.send(message)
     else:
@@ -87,120 +74,180 @@ async def removetimezone(ctx, label: str):
     async with aiosqlite.connect(DATABASE) as db:
         await db.execute("DELETE FROM timezones WHERE label = ?", (label,))
         await db.commit()
-    await ctx.send(f"Timezone '{label}' removed.")
+    await ctx.send(f"Timezone {label} removed.")
 
+# Function to get the UTC offset for a timezone
 def get_utc_offset(timezone_name):
-    """Gets the UTC offset for a timezone."""
     tz_info = pytz.timezone(timezone_name)
     utc_time = datetime.now(pytz.utc)
     local_time = utc_time.astimezone(tz_info)
     offset = local_time.utcoffset().total_seconds() / 3600  # Convert to hours
     return offset
 
-@tasks.loop(seconds=45)
-async def display_timezones():
-    """Periodically updates the Timezones Display message every 45 seconds."""
-    channel = bot.get_channel(WORLD_CLOCK_CHANNEL_ID)
-    if not channel:
-        print("World Clock channel not found.")
-        return
-
-    try:
-        message_to_edit = await channel.fetch_message(TIMEZONES_MESSAGE_ID)
-
-        # Create the updated timezones message
-        message = "```"
-        async with aiosqlite.connect(DATABASE) as db:
-            cursor = await db.execute("SELECT label, timezone FROM timezones")
-            timezones = await cursor.fetchall()
-
-        if timezones:
-            timezones.sort(key=lambda x: get_utc_offset(x[1]))
-            for label, tz in timezones:
-                tz_info = pytz.timezone(tz)
-                utc_time = datetime.now(pytz.utc)
-                local_time = utc_time.astimezone(tz_info)
-                region = label
-                date = local_time.strftime('%m/%d')
-                time = local_time.strftime('%I:%M %p')
-                message += f"{region:<20} | {date:<7} | {time}\n"
-            message += "```"
-
-        # Edit the message with the new content
-        await message_to_edit.edit(content=message)
-
-    except discord.NotFound:
-        print("Timezones Display message not found.")
-    except discord.Forbidden:
-        print("Bot lacks permission to edit the Timezones Display message.")
-    except Exception as e:
-        print(f"Error updating Timezones Display: {e}")
-
-@tasks.loop(seconds=45)
-async def rsgametime_loop():
-    """Updates the RuneScape Game Time message every 45 seconds."""
-    channel = bot.get_channel(WORLD_CLOCK_CHANNEL_ID)
-    if not channel:
-        print("World Clock channel not found.")
-        return
-
-    try:
-        message_to_edit = await channel.fetch_message(RST_MESSAGE_ID)
-
-        # Generate the updated RuneScape Game Time message
-        tz_info = pytz.timezone('Europe/London')
-        utc_time = datetime.now(pytz.utc)
-        local_time = utc_time.astimezone(tz_info)
-        game_time = local_time.strftime('%H:%M')
-        message = f"```Runescape Game Time: {game_time}```"
-
-        # Edit the message with the new content
-        await message_to_edit.edit(content=message)
-
-    except discord.NotFound:
-        print("RuneScape Game Time message not found.")
-    except discord.Forbidden:
-        print("Bot lacks permission to edit the RuneScape Game Time message.")
-    except Exception as e:
-        print(f"Error updating RuneScape Game Time: {e}")
-
 @bot.command()
-async def currenttime(ctx):
-    """Responds with the current times for all tracked timezones."""
+async def displaytimezones(ctx):
+    """Displays the current timezones in the channel and stores the message ID for future updates."""
+    global display_message_info
+    channel = ctx.channel
+
+    # Create the message content
     message = "```"
     async with aiosqlite.connect(DATABASE) as db:
         cursor = await db.execute("SELECT label, timezone FROM timezones")
         timezones = await cursor.fetchall()
 
     if timezones:
+        # Sort timezones based on UTC offset
+        timezones.sort(key=lambda x: get_utc_offset(x[1]))
+
+        # Add sorted timezones to the message
         for label, tz in timezones:
+            tz_info = pytz.timezone(tz)
+            utc_time = datetime.now(pytz.utc)
+            local_time = utc_time.astimezone(tz_info)
+
+            region = label
+            date = local_time.strftime('%m/%d')
+            time = local_time.strftime('%I:%M %p')
+
+            message += f"{region:<20} | {date:<7} | {time}\n"
+        message += "```"
+
+    # Send the message and store the message_id and channel_id for future updates
+    sent_message = await channel.send(message)
+    display_message_info = {'message_id': sent_message.id, 'channel_id': channel.id}
+
+@tasks.loop(seconds=37)
+async def display_timezones():
+    """Updates the timezones message every 15 seconds."""
+    global display_message_info
+
+    # If the message ID is stored, try to update the message
+    if display_message_info.get('message_id') and display_message_info.get('channel_id'):
+        channel = bot.get_channel(display_message_info['channel_id'])
+        if channel:
             try:
-                # Validate and process the timezone
-                tz_info = pytz.timezone(tz)
-                utc_time = datetime.now(pytz.utc)
-                local_time = utc_time.astimezone(tz_info)
-                region = label
-                date = local_time.strftime('%m/%d')
-                time = local_time.strftime('%I:%M %p')
-                message += f"{region:<20} | {date:<7} | {time}\n"
-            except pytz.UnknownTimeZoneError:
-                message += f"{label:<20} | Invalid Timezone\n"
+                message_to_edit = await channel.fetch_message(display_message_info['message_id'])
+                message = "```"
+                async with aiosqlite.connect(DATABASE) as db:
+                    cursor = await db.execute("SELECT label, timezone FROM timezones")
+                    timezones = await cursor.fetchall()
+
+                if timezones:
+                    # Sort timezones based on UTC offset
+                    timezones.sort(key=lambda x: get_utc_offset(x[1]))
+
+                    # Add sorted timezones to the message
+                    for label, tz in timezones:
+                        tz_info = pytz.timezone(tz)
+                        utc_time = datetime.now(pytz.utc)
+                        local_time = utc_time.astimezone(tz_info)
+
+                        region = label
+                        date = local_time.strftime('%m/%d')
+                        time = local_time.strftime('%I:%M %p')
+
+                        message += f"{region:<20} | {date:<7} | {time}\n"
+                    message += "```"
+
+                # Update the message with the new timezone data
+                await message_to_edit.edit(content=message)
+
+            except discord.NotFound:
+                print("Message not found, skipping update.")
+            except discord.Forbidden:
+                print("Bot does not have permission to edit the message.")
+
+@bot.command()
+async def currenttime(ctx):
+    """Displays the current timezones in a static message."""
+    message = "```"
+    async with aiosqlite.connect(DATABASE) as db:
+        cursor = await db.execute("SELECT label, timezone FROM timezones")
+        timezones = await cursor.fetchall()
+
+    if timezones:
+        # Sort timezones based on UTC offset
+        timezones.sort(key=lambda x: get_utc_offset(x[1]))
+
+        # Add sorted timezones to the message
+        for label, tz in timezones:
+            tz_info = pytz.timezone(tz)
+            utc_time = datetime.now(pytz.utc)
+            local_time = utc_time.astimezone(tz_info)
+
+            region = label
+            date = local_time.strftime('%m/%d')
+            time = local_time.strftime('%I:%M %p')
+
+            message += f"{region:<20} | {date:<7} | {time}\n"
         message += "```"
         await ctx.send(message)
-    else:
-        await ctx.send("No timezones are currently tracked.")
+
+@bot.command()
+async def rsgametime(ctx):
+    """Displays the current Runescape Game Time (RST)."""
+    global rsgame_message_info
+    channel = ctx.channel
+
+    # Create the message content
+    message = "```"
+    tz_info = pytz.timezone('Europe/London')
+    utc_time = datetime.now(pytz.utc)
+    local_time = utc_time.astimezone(tz_info)
+
+    # Runescape Game Time is based on London time
+    game_time = local_time.strftime('%H:%M')
+
+    message += f"Runescape Game Time is {game_time}\n"
+    message += "```"
+
+    # Send the message and store the message_id and channel_id for future updates
+    sent_message = await channel.send(message)
+    rsgame_message_info = {'message_id': sent_message.id, 'channel_id': channel.id}
+
+@tasks.loop(seconds=37)
+async def rsgametime_loop():
+    """Updates the Runescape Game Time message every 15 seconds."""
+    global rsgame_message_info
+
+    # If the message ID is stored, try to update the message
+    if rsgame_message_info.get('message_id') and rsgame_message_info.get('channel_id'):
+        channel = bot.get_channel(rsgame_message_info['channel_id'])
+        if channel:
+            try:
+                message_to_edit = await channel.fetch_message(rsgame_message_info['message_id'])
+                message = "```"
+                tz_info = pytz.timezone('Europe/London')
+                utc_time = datetime.now(pytz.utc)
+                local_time = utc_time.astimezone(tz_info)
+
+                # Runescape Game Time is based on London time
+                game_time = local_time.strftime('%H:%M')
+
+                message += f"Runescape Game Time is {game_time}\n"
+                message += "```"
+
+                # Update the message with the new game time
+                await message_to_edit.edit(content=message)
+
+            except discord.NotFound:
+                print("Message not found, skipping update.")
+            except discord.Forbidden:
+                print("Bot does not have permission to edit the message.")
 
 @bot.command()
 async def worldclockhelp(ctx):
-    """Displays a help message with available commands."""
+    """Displays the help message with a list of available commands."""
     help_message = """
     **WorldClock Bot Commands:**
 
-    `!addtimezone [label] [timezone]` - Adds a new timezone.
-    `!listtimezones` - Lists all tracked timezones.
-    `!removetimezone [label]` - Removes a timezone.
-    `!displaytimezones` - Displays the current timezones and updates the #world-clock channel periodically.
-    `!currenttime` - Responds with the current times of all tracked timezones.
+    `!addtimezone [label]` - Adds a new timezone to the list of tracked timezones.
+    `!listtimezones` - Lists all currently tracked timezones.
+    `!removetimezone [label]` - Removes a timezone from the list of tracked timezones.
+    `!displaytimezones` - Displays the current times of all tracked timezones and updates every 15 seconds.
+    `!currenttime` - Displays the current times of all tracked timezones in a static message.
+    `!rsgametime` - Displays the current Runescape Game Time (RST) and updates every 15 seconds.
     """
     await ctx.send(help_message)
 
