@@ -44,12 +44,26 @@ async def on_ready():
     rsgametime_loop.start()
 
 @bot.command()
-async def addtimezone(ctx, label: str, timezone: str):
-    """Adds a new timezone to the list of tracked timezones."""
+async def addtimezone(ctx, timezone: str):
+    """Adds a new timezone to the list of tracked timezones.
+    
+    Usage: !addtimezone <timezone>
+    Example: !addtimezone America/Los_Angeles
+    """
+    try:
+        # Validate the timezone
+        pytz.timezone(timezone)
+    except pytz.UnknownTimeZoneError:
+        await ctx.send(f"Error: '{timezone}' is not a valid timezone. Please use a valid timezone (e.g., 'America/Los_Angeles').")
+        return
+
+    # Use the timezone as both the label and the timezone in the database
+    label = timezone
     async with aiosqlite.connect(DATABASE) as db:
         await db.execute("INSERT INTO timezones (label, timezone) VALUES (?, ?)", (label, timezone))
         await db.commit()
-    await ctx.send(f"Timezone '{label}' ({timezone}) added.")
+    await ctx.send(f"Timezone '{timezone}' added.")
+
 
 @bot.command()
 async def listtimezones(ctx):
@@ -159,15 +173,18 @@ async def currenttime(ctx):
         timezones = await cursor.fetchall()
 
     if timezones:
-        timezones.sort(key=lambda x: get_utc_offset(x[1]))
         for label, tz in timezones:
-            tz_info = pytz.timezone(tz)
-            utc_time = datetime.now(pytz.utc)
-            local_time = utc_time.astimezone(tz_info)
-            region = label
-            date = local_time.strftime('%m/%d')
-            time = local_time.strftime('%I:%M %p')
-            message += f"{region:<20} | {date:<7} | {time}\n"
+            try:
+                # Validate and process the timezone
+                tz_info = pytz.timezone(tz)
+                utc_time = datetime.now(pytz.utc)
+                local_time = utc_time.astimezone(tz_info)
+                region = label
+                date = local_time.strftime('%m/%d')
+                time = local_time.strftime('%I:%M %p')
+                message += f"{region:<20} | {date:<7} | {time}\n"
+            except pytz.UnknownTimeZoneError:
+                message += f"{label:<20} | Invalid Timezone\n"
         message += "```"
         await ctx.send(message)
     else:
