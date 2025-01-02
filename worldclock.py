@@ -179,7 +179,9 @@ async def currenttime(ctx):
             message += f"{region:<20} | {date:<7} | {time}\n"
         message += "```"
         await ctx.send(message)
-
+    else:
+        await ctx.send("No timezones are currently tracked.")
+        
 @bot.command()
 async def rsgametime(ctx):
     """Displays the current Runescape Game Time (RST)."""
